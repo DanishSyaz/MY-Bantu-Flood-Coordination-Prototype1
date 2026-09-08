@@ -1,5 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
+import { RainfallChart } from '../components/RainfallChart'
+import { MapView } from '../components/MapView'
+import {
+  loadFromStorage,
+  saveToStorage,
+  clearAllAppData,
+  STORAGE_KEYS,
+} from '../utils/storage'
 
 export const Route = createFileRoute('/')({
   component: App,
@@ -7,7 +15,7 @@ export const Route = createFileRoute('/')({
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Screen = 'dashboard' | 'shelters' | 'aid' | 'volunteers' | 'alerts' | 'settings'
+type Screen = 'dashboard' | 'shelters' | 'aid' | 'volunteers' | 'alerts' | 'map' | 'settings'
 type Theme = 'light' | 'dark'
 type Lang = 'ms' | 'en'
 
@@ -20,6 +28,8 @@ interface Shelter {
   facilities: string[]
   roadStatus: 'safe' | 'caution' | 'closed'
   contact: string
+  lat: number
+  lng: number
 }
 
 interface AidRequest {
@@ -54,11 +64,11 @@ interface AlertItem {
 // ─── Mock Data ───────────────────────────────────────────────────────────────
 
 const initialShelters: Shelter[] = [
-  { id: 's1', name: 'Dewan Komuniti Sg. Buloh', location: 'Sungai Buloh, Selangor', capacity: 200, occupied: 147, facilities: ['Air bersih', 'Tandas', 'Dapur', 'WiFi'], roadStatus: 'safe', contact: '03-6140 7890' },
-  { id: 's2', name: 'Sekolah Kebangsaan Klang', location: 'Klang, Selangor', capacity: 300, occupied: 289, facilities: ['Air bersih', 'Tandas', 'Katil'], roadStatus: 'caution', contact: '03-3372 1234' },
-  { id: 's3', name: 'Balai Raya Kg. Sentosa', location: 'Kg. Sentosa, Pahang', capacity: 120, occupied: 34, facilities: ['Air bersih', 'Tandas', 'Surau'], roadStatus: 'safe', contact: '09-5561 8800' },
-  { id: 's4', name: 'Pusat Peranginan Gombak', location: 'Gombak, KL', capacity: 150, occupied: 150, facilities: ['Air bersih', 'Tandas', 'Dapur', 'Katil', 'WiFi'], roadStatus: 'closed', contact: '03-6189 2000' },
-  { id: 's5', name: 'Sekolah Menengah Bera', location: 'Bera, Pahang', capacity: 250, occupied: 78, facilities: ['Air bersih', 'Tandas', 'Dapur'], roadStatus: 'safe', contact: '09-2553 4567' },
+  { id: 's1', name: 'Dewan Komuniti Sg. Buloh', location: 'Sungai Buloh, Selangor', capacity: 200, occupied: 147, facilities: ['Air bersih', 'Tandas', 'Dapur', 'WiFi'], roadStatus: 'safe', contact: '03-6140 7890', lat: 3.210, lng: 101.575 },
+  { id: 's2', name: 'Sekolah Kebangsaan Klang', location: 'Klang, Selangor', capacity: 300, occupied: 289, facilities: ['Air bersih', 'Tandas', 'Katil'], roadStatus: 'caution', contact: '03-3372 1234', lat: 3.045, lng: 101.447 },
+  { id: 's3', name: 'Balai Raya Kg. Sentosa', location: 'Kg. Sentosa, Pahang', capacity: 120, occupied: 34, facilities: ['Air bersih', 'Tandas', 'Surau'], roadStatus: 'safe', contact: '09-5561 8800', lat: 3.505, lng: 102.620 },
+  { id: 's4', name: 'Pusat Peranginan Gombak', location: 'Gombak, KL', capacity: 150, occupied: 150, facilities: ['Air bersih', 'Tandas', 'Dapur', 'Katil', 'WiFi'], roadStatus: 'closed', contact: '03-6189 2000', lat: 3.248, lng: 101.735 },
+  { id: 's5', name: 'Sekolah Menengah Bera', location: 'Bera, Pahang', capacity: 250, occupied: 78, facilities: ['Air bersih', 'Tandas', 'Dapur'], roadStatus: 'safe', contact: '09-2553 4567', lat: 3.465, lng: 102.582 },
 ]
 
 const initialAidRequests: AidRequest[] = [
@@ -81,6 +91,27 @@ const initialVolunteers: Volunteer[] = [
   { id: 'v9', name: 'Hafizuddin', skill: 'Pemandu', assignedTo: 'Titik Agihan D – Bera', status: 'assigned' },
   { id: 'v10', name: 'Maryam Idris', skill: 'Perubatan', assignedTo: 'Titik Agihan E – Sentosa', status: 'assigned' },
 ]
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+function formatGovDate(dateStr?: string): string {
+  if (!dateStr) return 'Terkini'
+  try {
+    return new Date(dateStr).toLocaleString('ms-MY', { dateStyle: 'short', timeStyle: 'short' })
+  } catch {
+    return dateStr
+  }
+}
 
 const distributionPoints = [
   'Titik Agihan A – Dewan Sg. Buloh',
@@ -191,6 +222,8 @@ const T = {
     alertLevel: 'Tahap Amaran',
     danger: 'BAHAYA',
     viewAllShelters: 'Lihat Semua Pusat Pemindahan',
+    map: 'Peta',
+    mapSubtitle: 'Selangor & Pahang · Data masa nyata',
   },
   en: {
     appName: 'MY Bantu',
@@ -282,6 +315,8 @@ const T = {
     alertLevel: 'Alert Level',
     danger: 'DANGER',
     viewAllShelters: 'View All Shelters',
+    map: 'Map',
+    mapSubtitle: 'Selangor & Pahang · Live data',
   },
 }
 
@@ -329,49 +364,131 @@ function Icon({ name, size = 24, className = '', style }: { name: string; size?:
 
 // ─── Shared Components ────────────────────────────────────────────────────────
 
-function OfflineBanner({ isOffline, lastSync, t }: { isOffline: boolean; lastSync: string; t: typeof T.ms }) {
+function AppTopBar({ isOffline, t, theme, setTheme, setScreen, screen }: {
+  isOffline: boolean
+  t: typeof T.ms
+  theme: Theme
+  setTheme: (t: Theme) => void
+  setScreen: (s: Screen) => void
+  screen: Screen
+}) {
   return (
-    <div className="offline-banner" style={{ background: isOffline ? '#b45309' : '#00236f' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Icon name={isOffline ? 'wifi_off' : 'wifi'} size={14} />
-        <span>{isOffline ? t.offlineMode : 'MY BANTU'}</span>
+    <div className="app-top-bar">
+      <div className="app-top-bar-logo">
+        <span style={{ fontSize: 20 }}>🌊</span>
+        <span>{t.appName}</span>
+        {isOffline && <span className="offline-chip">{t.offlineMode}</span>}
       </div>
-      <span style={{ fontWeight: 400, textTransform: 'none', fontSize: 10 }}>
-        {t.lastSync}: {lastSync}
-      </span>
+      <div className="app-top-bar-actions">
+        <button
+          className="top-bar-icon-btn"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          aria-label="Toggle theme"
+        >
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+        </button>
+        <button
+          className={`top-bar-icon-btn${screen === 'settings' ? ' active' : ''}`}
+          onClick={() => setScreen('settings')}
+          aria-label="Settings"
+        >
+          <Icon name="settings" size={18} />
+        </button>
+      </div>
     </div>
   )
 }
 
-function BottomNav({ screen, setScreen, t, alertCount }: {
+function AppTopTabs({ screen, setScreen, t, alertCount }: {
   screen: Screen
   setScreen: (s: Screen) => void
   t: typeof T.ms
   alertCount: number
 }) {
-  const items: { id: Screen; label: string; icon: string; notif?: boolean }[] = [
+  const tabs: { id: Screen; label: string; notif?: boolean }[] = [
+    { id: 'dashboard', label: t.dashboard },
+    { id: 'shelters', label: t.shelters },
+    { id: 'aid', label: t.aid },
+    { id: 'volunteers', label: t.volunteers },
+    { id: 'alerts', label: t.alerts, notif: alertCount > 0 },
+    { id: 'map', label: t.map },
+  ]
+  return (
+    <div className="top-tabs">
+      {tabs.map(tab => (
+        <button
+          key={tab.id}
+          className={`top-tab${screen === tab.id ? ' active' : ''}`}
+          onClick={() => setScreen(tab.id)}
+        >
+          {tab.label}
+          {tab.notif && <span className="tab-notif-dot" />}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ─── Side Navigation (desktop) ───────────────────────────────────────────────
+
+function SideNav({ screen, setScreen, t, theme, setTheme, alertCount }: {
+  screen: Screen
+  setScreen: (s: Screen) => void
+  t: typeof T.ms
+  theme: Theme
+  setTheme: (t: Theme) => void
+  alertCount: number
+}) {
+  const navItems: { id: Screen; label: string; icon: string; notif?: boolean }[] = [
     { id: 'dashboard', label: t.dashboard, icon: 'home' },
     { id: 'shelters', label: t.shelters, icon: 'shelter' },
     { id: 'aid', label: t.aid, icon: 'package' },
     { id: 'volunteers', label: t.volunteers, icon: 'volunteer' },
     { id: 'alerts', label: t.alerts, icon: 'bell', notif: alertCount > 0 },
+    { id: 'map', label: t.map, icon: 'map' },
   ]
+
   return (
-    <nav className="bottom-nav">
-      {items.map(item => (
+    <nav className="side-nav" aria-label="Main navigation">
+      {/* Brand */}
+      <div className="side-nav-brand">
+        <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 20 }}>🌊</span> {t.appName}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--on-surface-variant)', marginTop: 3 }}>{t.appSubtitle}</div>
+      </div>
+
+      {/* Nav items */}
+      <div className="side-nav-section">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            className={`side-nav-item ${screen === item.id ? 'active' : ''}`}
+            onClick={() => setScreen(item.id)}
+          >
+            <Icon name={item.icon} size={18} />
+            {item.label}
+            {item.notif && (
+              <span style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: '#ba1a1a', flexShrink: 0 }} />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Footer: Settings + theme toggle */}
+      <div className="side-nav-footer">
         <button
-          key={item.id}
-          className={`bottom-nav-item ${screen === item.id ? 'active' : ''}`}
-          onClick={() => setScreen(item.id)}
-          aria-label={item.label}
+          className={`side-nav-item ${screen === 'settings' ? 'active' : ''}`}
+          onClick={() => setScreen('settings')}
         >
-          <div style={{ position: 'relative' }}>
-            <Icon name={item.icon} size={22} />
-            {item.notif && <span className="notif-dot" />}
-          </div>
-          <span>{item.label}</span>
+          <Icon name="settings" size={18} />
+          {t.settings}
         </button>
-      ))}
+        <button className="side-nav-item" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+          {theme === 'dark' ? t.lightMode : t.darkMode}
+        </button>
+      </div>
     </nav>
   )
 }
@@ -379,7 +496,7 @@ function BottomNav({ screen, setScreen, t, alertCount }: {
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
 
 function DashboardScreen({
-  t, shelters, aidRequests, volunteers, setScreen, totalDisplaced,
+  t, shelters, aidRequests, volunteers, setScreen, totalDisplaced, theme,
 }: {
   t: typeof T.ms
   shelters: Shelter[]
@@ -387,6 +504,7 @@ function DashboardScreen({
   volunteers: Volunteer[]
   setScreen: (s: Screen) => void
   totalDisplaced: number
+  theme: Theme
 }) {
   const activeShelters = shelters.filter(s => s.occupied < s.capacity).length
   const activeVols = volunteers.filter(v => v.status !== 'available').length
@@ -424,6 +542,11 @@ function DashboardScreen({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Rainfall Chart */}
+      <div style={{ padding: '14px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)' }}>
+        <RainfallChart theme={theme} />
       </div>
 
       {/* SOS Button */}
@@ -541,14 +664,42 @@ function DashboardScreen({
 
 // ─── Shelters Screen ──────────────────────────────────────────────────────────
 
-function SheltersScreen({ t, shelters }: { t: typeof T.ms; shelters: Shelter[] }) {
+function SheltersScreen({ t, shelters, theme }: { t: typeof T.ms; shelters: Shelter[]; theme: Theme }) {
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'safe' | 'caution' | 'closed'>('all')
   const [selectedShelter, setSelectedShelter] = useState<Shelter | null>(null)
+  const [userLoc, setUserLoc] = useState<[number, number] | null>(null)
+  const [locLoading, setLocLoading] = useState(false)
+  const [locError, setLocError] = useState<string | null>(null)
 
-  const filtered = shelters.filter(s =>
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.location.toLowerCase().includes(search.toLowerCase())
-  )
+  // Sort by distance when userLoc is set
+  const sheltersWithDist = userLoc
+    ? [...shelters]
+        .map(s => ({ ...s, distKm: haversineKm(userLoc[1], userLoc[0], s.lat, s.lng) }))
+        .sort((a, b) => a.distKm - b.distKm)
+    : shelters.map(s => ({ ...s, distKm: null as number | null }))
+
+  const nearestId = userLoc
+    ? sheltersWithDist.find(s => s.roadStatus !== 'closed' && s.occupied < s.capacity)?.id ?? null
+    : null
+
+  const filtered = sheltersWithDist.filter(s => {
+    const matchesSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.location.toLowerCase().includes(search.toLowerCase())
+    const matchesStatus = statusFilter === 'all' || s.roadStatus === statusFilter
+    return matchesSearch && matchesStatus
+  })
+
+  const handleLocate = () => {
+    if (!navigator.geolocation) { setLocError('Geolokasi tidak disokong pada peranti ini'); return }
+    setLocLoading(true)
+    setLocError(null)
+    navigator.geolocation.getCurrentPosition(
+      pos => { setUserLoc([pos.coords.longitude, pos.coords.latitude]); setLocLoading(false) },
+      () => { setLocError('Akses lokasi ditolak atau tamat masa'); setLocLoading(false) },
+      { timeout: 10000, enableHighAccuracy: false }
+    )
+  }
 
   const handleShare = (s: Shelter) => {
     const pct = Math.round((s.occupied / s.capacity) * 100)
@@ -563,7 +714,25 @@ function SheltersScreen({ t, shelters }: { t: typeof T.ms; shelters: Shelter[] }
   return (
     <div className="screen">
       <div style={{ padding: '14px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)', position: 'sticky', top: 0, zIndex: 30 }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)', marginBottom: 10 }}>Pusat Pemindahan</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)' }}>Pusat Pemindahan</div>
+          <button
+            onClick={handleLocate}
+            disabled={locLoading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '7px 12px', borderRadius: 20,
+              border: `1.5px solid ${userLoc ? 'var(--primary)' : 'var(--outline-variant)'}`,
+              background: userLoc ? 'var(--primary)' : 'transparent',
+              color: userLoc ? 'var(--on-primary)' : 'var(--on-surface-variant)',
+              fontSize: 12, fontWeight: 600, cursor: locLoading ? 'wait' : 'pointer',
+              fontFamily: 'Inter, sans-serif', whiteSpace: 'nowrap',
+            }}
+          >
+            {locLoading ? '⌛' : '📍'}
+            {locLoading ? 'Mencari...' : userLoc ? 'Lokasi Aktif' : 'Cari Terdekat'}
+          </button>
+        </div>
         <input
           className="input-field"
           style={{ height: 44 }}
@@ -571,46 +740,94 @@ function SheltersScreen({ t, shelters }: { t: typeof T.ms; shelters: Shelter[] }
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+        <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
+          {[
+            { id: 'all', label: 'Semua' },
+            { id: 'safe', label: '🟢 Selamat' },
+            { id: 'caution', label: '🟡 Waspada' },
+            { id: 'closed', label: '🔴 Ditutup' },
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setStatusFilter(f.id as any)}
+              style={{
+                padding: '5px 12px',
+                borderRadius: 16,
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: statusFilter === f.id ? 'var(--primary)' : 'var(--surface-container-high)',
+                color: statusFilter === f.id ? 'var(--on-primary)' : 'var(--on-surface-variant)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {locError && (
+          <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 6 }}>{locError}</div>
+        )}
       </div>
 
-      {/* Map preview */}
-      <div className="map-bg" style={{ height: 140, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '12px 16px' }}>
-        <div style={{ background: 'rgba(0,0,0,0.55)', borderRadius: 8, padding: '6px 12px', color: 'white', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="map" size={15} />
-          {t.viewMap}
-        </div>
-        <div style={{ background: 'rgba(0,35,111,0.85)', borderRadius: 20, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 700 }}>
+      {/* Live mini-map */}
+      <div style={{ position: 'relative' }}>
+        <MapView shelters={shelters} aidRequests={[]} mini theme={theme} userLocation={userLoc} />
+        <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(0,0,0,0.65)', borderRadius: 20, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 700, pointerEvents: 'none' }}>
           {shelters.length} Pusat Aktif
         </div>
       </div>
 
-      <div style={{ padding: '12px 16px' }}>
+      <div className="shelter-grid" style={{ padding: '12px 16px' }}>
         {filtered.map(s => {
           const pct = Math.round((s.occupied / s.capacity) * 100)
           const isFull = pct >= 100
+          const isNearest = s.id === nearestId
+          const statusColor = s.roadStatus === 'safe' ? 'var(--success)' : s.roadStatus === 'caution' ? 'var(--warning)' : 'var(--danger)'
+          const topColor = isFull ? 'var(--danger)' : pct > 75 ? 'var(--warning)' : 'var(--success)'
           return (
             <div
               key={s.id}
               className="card"
-              style={{ marginBottom: 12, borderTop: `4px solid ${isFull ? '#ba1a1a' : pct > 75 ? '#b45309' : '#006e2d'}`, cursor: 'pointer' }}
+              style={{
+                marginBottom: 12,
+                borderTop: `4px solid ${topColor}`,
+                cursor: 'pointer',
+                boxShadow: isNearest ? '0 0 0 2px var(--primary)' : undefined,
+              }}
               onClick={() => setSelectedShelter(s)}
             >
               <div style={{ padding: '14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, flex: 1, paddingRight: 8 }}>{s.name}</div>
-                  <span className={`badge ${isFull ? 'badge-danger' : pct > 75 ? 'badge-warning' : 'badge-success'}`}>
-                    {isFull ? t.full : `${pct}%`}
-                  </span>
+                  <div style={{ flex: 1, paddingRight: 8 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>{s.name}</div>
+                    {isNearest && (
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--primary)', marginTop: 2, letterSpacing: '0.05em' }}>
+                        📍 TERDEKAT
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                    {s.distKm !== null && (
+                      <span className="badge badge-info" style={{ fontSize: 10 }}>
+                        {s.distKm < 1 ? `${Math.round(s.distKm * 1000)} m` : `${s.distKm.toFixed(1)} km`}
+                      </span>
+                    )}
+                    <span className={`badge ${isFull ? 'badge-danger' : pct > 75 ? 'badge-warning' : 'badge-success'}`}>
+                      {isFull ? t.full : `${pct}%`}
+                    </span>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--on-surface-variant)', fontSize: 13, marginBottom: 12 }}>
                   <Icon name="map_pin" size={13} />{s.location}
                 </div>
                 <div className="progress-bar" style={{ marginBottom: 6 }}>
-                  <div className="progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: isFull ? '#ba1a1a' : pct > 75 ? '#b45309' : '#006e2d' }} />
+                  <div className="progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: topColor }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--on-surface-variant)', marginBottom: 12 }}>
                   <span>{s.occupied} / {s.capacity} {t.occupied}</span>
-                  <span style={{ color: s.roadStatus === 'safe' ? '#006e2d' : s.roadStatus === 'caution' ? '#b45309' : '#ba1a1a', fontWeight: 700 }}>
+                  <span style={{ color: statusColor, fontWeight: 700 }}>
                     {s.roadStatus === 'safe' ? '✅' : s.roadStatus === 'caution' ? '⚠️' : '🚫'} {s.roadStatus === 'safe' ? t.safe : s.roadStatus === 'caution' ? t.caution : t.closed}
                   </span>
                 </div>
@@ -683,18 +900,21 @@ const AID_ITEMS = [
   'Peralatan tidur', 'Charger & bateri', 'Buku & alat tulis', 'Lain-lain',
 ]
 
-function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDisplaced }: {
+function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDisplaced, theme }: {
   t: typeof T.ms
   aidRequests: AidRequest[]
   setAidRequests: (r: AidRequest[]) => void
   totalDisplaced: number
   setTotalDisplaced: (n: number) => void
+  theme: Theme
 }) {
   const [showForm, setShowForm] = useState(false)
   const [step, setStep] = useState(1)
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({ kampung: '', displaced: '', selectedItems: [] as string[], notes: '' })
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'assigned' | 'delivered'>('all')
+  const [search, setSearch] = useState('')
 
   const toggleItem = (item: string) => {
     setForm(f => ({
@@ -730,6 +950,13 @@ function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDis
     setForm({ kampung: '', displaced: '', selectedItems: [], notes: '' })
   }
 
+  const filteredAidRequests = aidRequests.filter(r => {
+    const matchesStatus = statusFilter === 'all' || r.status === statusFilter
+    const matchesSearch = r.kampung.toLowerCase().includes(search.toLowerCase()) ||
+      r.items.some(it => it.toLowerCase().includes(search.toLowerCase()))
+    return matchesStatus && matchesSearch
+  })
+
   return (
     <div className="screen">
       <div style={{ padding: '14px 16px 10px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)' }}>
@@ -737,12 +964,10 @@ function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDis
         <div style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>Keperluan komuniti masa nyata di sekitar anda.</div>
       </div>
 
-      {/* Map preview */}
-      <div className="map-bg" style={{ height: 120, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '10px 16px' }}>
-        <div style={{ background: 'rgba(0,0,0,0.55)', borderRadius: 8, padding: '5px 12px', color: 'white', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="map" size={15} /> {t.viewMap}
-        </div>
-        <div style={{ background: 'rgba(186,26,26,0.85)', borderRadius: 20, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 700 }}>
+      {/* Live mini-map */}
+      <div style={{ position: 'relative' }}>
+        <MapView shelters={[]} aidRequests={aidRequests} mini theme={theme} />
+        <div style={{ position: 'absolute', bottom: 10, right: 10, background: 'rgba(186,26,26,0.85)', borderRadius: 20, padding: '4px 12px', color: 'white', fontSize: 12, fontWeight: 700, pointerEvents: 'none' }}>
           {aidRequests.filter(r => r.status !== 'delivered').length} {t.activeRequests}
         </div>
       </div>
@@ -750,19 +975,74 @@ function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDis
       {/* Summary bar */}
       <div style={{ padding: '12px 16px', background: 'var(--surface)', display: 'flex', gap: 12, borderBottom: '1px solid var(--outline-variant)' }}>
         {[
-          { label: 'Menunggu', val: aidRequests.filter(r => r.status === 'pending').length, color: '#b45309', bg: '#fef3c7' },
-          { label: 'Ditugaskan', val: aidRequests.filter(r => r.status === 'assigned').length, color: '#00236f', bg: '#dce1ff' },
-          { label: 'Dihantar', val: aidRequests.filter(r => r.status === 'delivered').length, color: '#006e2d', bg: '#dcfce7' },
+          { id: 'pending' as const, label: 'Menunggu', val: aidRequests.filter(r => r.status === 'pending').length, color: '#b45309', bg: '#fef3c7' },
+          { id: 'assigned' as const, label: 'Ditugaskan', val: aidRequests.filter(r => r.status === 'assigned').length, color: '#00236f', bg: '#dce1ff' },
+          { id: 'delivered' as const, label: 'Dihantar', val: aidRequests.filter(r => r.status === 'delivered').length, color: '#006e2d', bg: '#dcfce7' },
         ].map(s => (
-          <div key={s.label} style={{ flex: 1, textAlign: 'center', background: s.bg, borderRadius: 8, padding: '8px 4px' }}>
+          <div
+            key={s.label}
+            onClick={() => setStatusFilter(prev => prev === s.id ? 'all' : s.id)}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              background: s.bg,
+              borderRadius: 8,
+              padding: '8px 4px',
+              cursor: 'pointer',
+              border: statusFilter === s.id ? `2px solid ${s.color}` : '2px solid transparent',
+              transition: 'all 0.2s',
+            }}
+          >
             <div style={{ fontSize: 20, fontWeight: 700, color: s.color }}>{s.val}</div>
-            <div style={{ fontSize: 11, color: s.color, fontWeight: 500 }}>{s.label}</div>
+            <div style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
+      {/* Search and filter controls */}
+      <div style={{ padding: '12px 16px 8px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)' }}>
+        <input
+          className="input-field"
+          style={{ height: 40, marginBottom: 8 }}
+          placeholder="Cari kampung atau barangan..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+          {[
+            { id: 'all' as const, label: 'Semua Status' },
+            { id: 'pending' as const, label: '⏳ Menunggu' },
+            { id: 'assigned' as const, label: '🚚 Ditugaskan' },
+            { id: 'delivered' as const, label: '✅ Dihantar' },
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setStatusFilter(f.id)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: 14,
+                border: 'none',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: statusFilter === f.id ? 'var(--primary)' : 'var(--surface-container-high)',
+                color: statusFilter === f.id ? 'var(--on-primary)' : 'var(--on-surface-variant)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div style={{ padding: '12px 16px' }}>
-        {aidRequests.map(r => (
+        {filteredAidRequests.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--on-surface-variant)', fontSize: 14 }}>
+            Tiada permohonan bantuan padan dengan carian ini.
+          </div>
+        ) : (
+          filteredAidRequests.map(r => (
           <div key={r.id} className="card" style={{ marginBottom: 12, borderLeft: `4px solid ${r.priority === 'high' ? '#ba1a1a' : r.priority === 'medium' ? '#b45309' : '#006e2d'}` }}>
             <div style={{ padding: '12px 14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
@@ -792,11 +1072,11 @@ function AidScreen({ t, aidRequests, setAidRequests, totalDisplaced, setTotalDis
               </div>
             </div>
           </div>
-        ))}
+        )))}
       </div>
 
       {/* FAB */}
-      <button className="fab fab-wide" style={{ left: 'max(16px, calc(50% - 199px))', right: 'max(16px, calc(50% - 199px))', width: 'auto' }} onClick={() => setShowForm(true)}>
+      <button className="fab fab-wide" onClick={() => setShowForm(true)}>
         <Icon name="plus" size={20} /> {t.newRequest}
       </button>
 
@@ -1131,8 +1411,39 @@ function VolunteersScreen({ t, volunteers, setVolunteers }: {
 // ─── Alerts Screen ────────────────────────────────────────────────────────────
 
 function AlertsScreen({ t, alerts }: { t: typeof T.ms; alerts: AlertItem[] }) {
-  const [sharedIds, setSharedIds] = useState<string[]>([])
   const [activeFilter, setActiveFilter] = useState<'all' | 'verified' | 'warning' | 'misinformation'>('all')
+  const [liveAlerts, setLiveAlerts] = useState<AlertItem[]>([])
+  const [isLive, setIsLive] = useState(false)
+  const [fetchingLive, setFetchingLive] = useState(true)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  // Fetch real MetMalaysia warnings from data.gov.my
+  useEffect(() => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+
+    fetch('https://api.data.gov.my/weather/warning', { signal: controller.signal })
+      .then(r => { if (!r.ok) throw new Error('bad'); return r.json() })
+      .then(raw => {
+        const items: any[] = Array.isArray(raw) ? raw : raw.data ?? raw.results ?? []
+        if (items.length === 0) throw new Error('empty')
+        const mapped: AlertItem[] = items.slice(0, 6).map((item: any, i: number) => ({
+          id: `gov-${i}`,
+          type: 'warning' as const,
+          title: item.title_ms ?? item.title ?? item.warning_title ?? 'Amaran Cuaca',
+          content: item.text_ms ?? item.description ?? item.warning_desc ?? 'Sila berhati-hati.',
+          source: 'MetMalaysia · data.gov.my',
+          timestamp: formatGovDate(item.date_start ?? item.issued_date ?? item.date),
+          shared: 0,
+        }))
+        setLiveAlerts(mapped)
+        setIsLive(true)
+      })
+      .catch(() => { /* silently fall back to mock */ })
+      .finally(() => { clearTimeout(timeout); setFetchingLive(false) })
+
+    return () => { controller.abort(); clearTimeout(timeout) }
+  }, [])
 
   const handleShare = (alert: AlertItem) => {
     const prefix = alert.type === 'verified' ? '✅ DISAHKAN' : alert.type === 'misinformation' ? '❌ MAKLUMAT PALSU' : '⚠️ AMARAN'
@@ -1141,31 +1452,41 @@ function AlertsScreen({ t, alerts }: { t: typeof T.ms; alerts: AlertItem[] }) {
       navigator.share({ title: alert.title, text })
     } else {
       navigator.clipboard.writeText(text).then(() => {
-        setSharedIds(s => [...s, alert.id])
+        setCopiedId(alert.id)
+        setTimeout(() => setCopiedId(null), 2000)
       })
     }
   }
 
   const filterOptions: { key: 'all' | 'verified' | 'warning' | 'misinformation'; label: string; color: string }[] = [
     { key: 'all', label: 'Semua', color: 'var(--primary)' },
-    { key: 'verified', label: '✅ Disahkan', color: '#006e2d' },
-    { key: 'warning', label: '⚠️ Amaran', color: '#b45309' },
-    { key: 'misinformation', label: '❌ Palsu', color: '#ba1a1a' },
+    { key: 'verified', label: '✅ Disahkan', color: 'var(--success)' },
+    { key: 'warning', label: '⚠️ Amaran', color: 'var(--warning)' },
+    { key: 'misinformation', label: '❌ Palsu', color: 'var(--danger)' },
   ]
 
-  const displayedAlerts = activeFilter === 'all' ? alerts : alerts.filter(a => a.type === activeFilter)
+  // Live alerts first, then mock
+  const allAlerts = [...liveAlerts, ...alerts]
+  const displayedAlerts = activeFilter === 'all' ? allAlerts : allAlerts.filter(a => a.type === activeFilter)
 
   const typeConfig = {
-    verified: { color: '#006e2d', bg: '#dcfce7', label: t.verified, icon: 'check_circle' },
-    warning: { color: '#b45309', bg: '#fef3c7', label: t.warning, icon: 'alert' },
-    misinformation: { color: '#ba1a1a', bg: '#ffdad6', label: t.misinformation, icon: 'x_circle' },
+    verified: { color: 'var(--success)', bgRgba: 'rgba(74,222,128,0.15)', label: t.verified, icon: 'check_circle', badgeHex: '#16a34a' },
+    warning: { color: 'var(--warning)', bgRgba: 'rgba(251,146,60,0.15)', label: t.warning, icon: 'alert', badgeHex: '#d97706' },
+    misinformation: { color: 'var(--danger)', bgRgba: 'rgba(248,113,113,0.15)', label: t.misinformation, icon: 'x_circle', badgeHex: '#dc2626' },
   }
 
   return (
     <div className="screen">
       <div style={{ padding: '14px 16px 10px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)' }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)', marginBottom: 2 }}>Suapan Amaran</div>
-        <div style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>Maklumat disahkan dari sumber rasmi.</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)', marginBottom: 2 }}>Suapan Amaran</div>
+          <span className={`badge ${isLive ? 'badge-success' : 'badge-gray'}`} style={{ fontSize: 9, marginTop: 4, flexShrink: 0 }}>
+            {fetchingLive ? '⌛ Memuatkan' : isLive ? '● LANGSUNG' : 'SIMULASI'}
+          </span>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--on-surface-variant)' }}>
+          {isLive ? `${liveAlerts.length} amaran langsung · MetMalaysia` : 'Maklumat disahkan dari sumber rasmi.'}
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8, padding: '12px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)', overflowX: 'auto' }}>
@@ -1193,39 +1514,50 @@ function AlertsScreen({ t, alerts }: { t: typeof T.ms; alerts: AlertItem[] }) {
         {displayedAlerts.map(alertItem => {
           const cfg = typeConfig[alertItem.type]
           return (
-            <div key={alertItem.id} className="card" style={{ marginBottom: 12, borderTop: `4px solid ${cfg.color}` }}>
-              <div style={{ padding: '4px 14px', background: cfg.bg, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Icon name={cfg.icon} size={14} style={{ color: cfg.color }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, letterSpacing: '0.06em' }}>{cfg.label}</span>
-              </div>
-              <div style={{ padding: '12px 14px' }}>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, lineHeight: 1.3 }}>{alertItem.title}</div>
-                <div style={{ fontSize: 14, color: 'var(--on-surface-variant)', lineHeight: 1.6, marginBottom: 12 }}>{alertItem.content}</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: 12, color: 'var(--outline)' }}>
-                    <strong>Sumber:</strong> {alertItem.source}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--outline)' }}>{alertItem.timestamp}</div>
+            <div key={alertItem.id} className="mymet-alert-card">
+              {/* Header row: icon + title + share button */}
+              <div className="mymet-alert-header">
+                <div className="mymet-icon-circle" style={{ background: cfg.bgRgba }}>
+                  <Icon name={cfg.icon} size={20} style={{ color: cfg.color }} />
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    style={{ flex: 1 }}
-                    onClick={() => handleShare(alertItem)}
-                  >
-                    <Icon name="share" size={14} />
-                    {sharedIds.includes(alertItem.id) ? 'Disalin!' : t.share}
-                    {!sharedIds.includes(alertItem.id) && <span style={{ opacity: 0.7 }}> ({alertItem.shared})</span>}
-                  </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mymet-alert-title">{alertItem.title}</div>
+                  <div className="mymet-alert-issued">Dikeluarkan: {alertItem.timestamp}</div>
+                </div>
+                <button
+                  className="mymet-share-btn"
+                  onClick={() => handleShare(alertItem)}
+                  aria-label="Share"
+                  title={copiedId === alertItem.id ? 'Disalin!' : 'Kongsi'}
+                  style={{ color: copiedId === alertItem.id ? 'var(--success)' : undefined }}
+                >
+                  <Icon name={copiedId === alertItem.id ? 'check' : 'share'} size={16} />
+                </button>
+              </div>
+
+              {/* Notice strip: badge + time + content + source */}
+              <div className="mymet-notice-strip" style={{ borderLeftColor: cfg.color }}>
+                <div className="mymet-notice-meta">
+                  <span className="mymet-notice-label" style={{ background: cfg.badgeHex }}>
+                    {cfg.label}
+                  </span>
+                  <span className="mymet-notice-time">{alertItem.timestamp}</span>
+                </div>
+                <p className="mymet-notice-content">{alertItem.content}</p>
+                <div className="mymet-notice-footer">
+                  <span className="mymet-notice-source">
+                    Sumber: {alertItem.source} · {alertItem.shared} dikongsi
+                  </span>
                   {alertItem.type !== 'verified' && (
                     <button
                       className="btn btn-secondary btn-sm"
+                      style={{ flexShrink: 0 }}
                       onClick={() => {
                         if (alertItem.type === 'misinformation') window.open('https://sebenarnya.my', '_blank')
                         else window.open('https://www.met.gov.my', '_blank')
                       }}
                     >
-                      <Icon name="info" size={14} /> Semak
+                      <Icon name="info" size={13} /> Semak
                     </button>
                   )}
                 </div>
@@ -1240,7 +1572,7 @@ function AlertsScreen({ t, alerts }: { t: typeof T.ms; alerts: AlertItem[] }) {
 
 // ─── Settings Screen ──────────────────────────────────────────────────────────
 
-function SettingsScreen({ t, theme, setTheme, lang, setLang, isOffline, setIsOffline, lowData, setLowData, autoSync, setAutoSync }: {
+function SettingsScreen({ t, theme, setTheme, lang, setLang, isOffline, setIsOffline, lowData, setLowData, autoSync, setAutoSync, onResetData }: {
   t: typeof T.ms
   theme: Theme
   setTheme: (t: Theme) => void
@@ -1252,6 +1584,7 @@ function SettingsScreen({ t, theme, setTheme, lang, setLang, isOffline, setIsOff
   setLowData: (v: boolean) => void
   autoSync: boolean
   setAutoSync: (v: boolean) => void
+  onResetData?: () => void
 }) {
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div style={{ marginBottom: 8 }}>
@@ -1339,8 +1672,18 @@ function SettingsScreen({ t, theme, setTheme, lang, setLang, isOffline, setIsOff
         <Row label={t.appVersion}>
           <span style={{ fontSize: 14, color: 'var(--outline)' }}>v2.1.4 (Build 241)</span>
         </Row>
-        <div className="list-item" style={{ cursor: 'pointer', justifyContent: 'space-between' }} onClick={() => alert('Cache dikosongkan!')}>
-          <span style={{ fontSize: 16, color: '#ba1a1a' }}>{t.clearCache}</span>
+        <div
+          className="list-item"
+          style={{ cursor: 'pointer', justifyContent: 'space-between' }}
+          onClick={() => {
+            if (typeof window !== 'undefined' && window.confirm('Adakah anda pasti mahu menetapkan semula semua data tempatan (LocalStorage) kepada asal?')) {
+              clearAllAppData()
+              onResetData?.()
+              alert('Semua data tempatan telah dikosongkan dan dipulihkan ke nilai asal!')
+            }
+          }}
+        >
+          <span style={{ fontSize: 16, color: '#ba1a1a' }}>Kosongkan Cache & Tetap Semula Data</span>
           <Icon name="refresh" size={18} style={{ color: '#ba1a1a' }} />
         </div>
       </Section>
@@ -1354,45 +1697,106 @@ function SettingsScreen({ t, theme, setTheme, lang, setLang, isOffline, setIsOff
   )
 }
 
+// ─── Map Screen ───────────────────────────────────────────────────────────────
+
+function MapScreen({ t, shelters, aidRequests, theme }: {
+  t: typeof T.ms
+  shelters: Shelter[]
+  aidRequests: AidRequest[]
+  theme: Theme
+}) {
+  return (
+    <div className="screen map-screen" style={{ display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '14px 16px 10px', background: 'var(--surface)', borderBottom: '1px solid var(--outline-variant)', flexShrink: 0 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)', marginBottom: 2 }}>
+          {t.map} Risiko Banjir
+        </div>
+        <div style={{ fontSize: 14, color: 'var(--on-surface-variant)' }}>{t.mapSubtitle}</div>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <MapView shelters={shelters} aidRequests={aidRequests} theme={theme} />
+      </div>
+    </div>
+  )
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
-  const [theme, setTheme] = useState<Theme>('light')
-  const [lang, setLang] = useState<Lang>('ms')
+  const [theme, setTheme] = useState<Theme>(() => loadFromStorage<Theme>(STORAGE_KEYS.THEME, 'dark'))
+  const [lang, setLang] = useState<Lang>(() => loadFromStorage<Lang>(STORAGE_KEYS.LANG, 'ms'))
   const [isOffline, setIsOffline] = useState(false)
-  const [lowData, setLowData] = useState(true)
+  const [lowData, setLowData] = useState<boolean>(() => loadFromStorage<boolean>(STORAGE_KEYS.LOW_DATA, true))
   const [autoSync, setAutoSync] = useState(true)
-  const [lastSync] = useState('2 min lepas')
-  const [shelters] = useState(initialShelters)
-  const [aidRequests, setAidRequests] = useState(initialAidRequests)
-  const [volunteers, setVolunteers] = useState(initialVolunteers)
+  const [shelters, setShelters] = useState<Shelter[]>(() => loadFromStorage<Shelter[]>(STORAGE_KEYS.SHELTERS, initialShelters))
+  const [aidRequests, setAidRequests] = useState<AidRequest[]>(() => loadFromStorage<AidRequest[]>(STORAGE_KEYS.AID_REQUESTS, initialAidRequests))
+  const [volunteers, setVolunteers] = useState<Volunteer[]>(() => loadFromStorage<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, initialVolunteers))
   const [alerts] = useState(initialAlerts)
-  const [totalDisplaced, setTotalDisplaced] = useState(50)
+  const [totalDisplaced, setTotalDisplaced] = useState<number>(() => {
+    const saved = loadFromStorage<AidRequest[]>(STORAGE_KEYS.AID_REQUESTS, initialAidRequests)
+    return saved.reduce((acc, r) => acc + (r.displaced || 0), 0) || 50
+  })
 
   const t = T[lang]
 
   // Apply theme to document
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', theme)
+    }
+    saveToStorage(STORAGE_KEYS.THEME, theme)
   }, [theme])
+
+  // Sync state changes with localStorage
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.LANG, lang)
+  }, [lang])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.LOW_DATA, lowData)
+  }, [lowData])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.SHELTERS, shelters)
+  }, [shelters])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.AID_REQUESTS, aidRequests)
+  }, [aidRequests])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.VOLUNTEERS, volunteers)
+  }, [volunteers])
+
+  const handleResetData = () => {
+    setShelters(initialShelters)
+    setAidRequests(initialAidRequests)
+    setVolunteers(initialVolunteers)
+    setTotalDisplaced(50)
+    setTheme('dark')
+    setLang('ms')
+    setLowData(true)
+  }
 
   const pendingAlerts = alerts.filter(a => a.type === 'warning' || a.type === 'misinformation').length
 
   const renderScreen = () => {
     switch (screen) {
       case 'dashboard':
-        return <DashboardScreen t={t} shelters={shelters} aidRequests={aidRequests} volunteers={volunteers} setScreen={setScreen} totalDisplaced={totalDisplaced} />
+        return <DashboardScreen t={t} shelters={shelters} aidRequests={aidRequests} volunteers={volunteers} setScreen={setScreen} totalDisplaced={totalDisplaced} theme={theme} />
       case 'shelters':
-        return <SheltersScreen t={t} shelters={shelters} />
+        return <SheltersScreen t={t} shelters={shelters} theme={theme} />
       case 'aid':
-        return <AidScreen t={t} aidRequests={aidRequests} setAidRequests={setAidRequests} totalDisplaced={totalDisplaced} setTotalDisplaced={setTotalDisplaced} />
+        return <AidScreen t={t} aidRequests={aidRequests} setAidRequests={setAidRequests} totalDisplaced={totalDisplaced} setTotalDisplaced={setTotalDisplaced} theme={theme} />
       case 'volunteers':
         return <VolunteersScreen t={t} volunteers={volunteers} setVolunteers={setVolunteers} />
       case 'alerts':
         return <AlertsScreen t={t} alerts={alerts} />
+      case 'map':
+        return <MapScreen t={t} shelters={shelters} aidRequests={aidRequests} theme={theme} />
       case 'settings':
-        return <SettingsScreen t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} isOffline={isOffline} setIsOffline={setIsOffline} lowData={lowData} setLowData={setLowData} autoSync={autoSync} setAutoSync={setAutoSync} />
+        return <SettingsScreen t={t} theme={theme} setTheme={setTheme} lang={lang} setLang={setLang} isOffline={isOffline} setIsOffline={setIsOffline} lowData={lowData} setLowData={setLowData} autoSync={autoSync} setAutoSync={setAutoSync} onResetData={handleResetData} />
       default:
         return null
     }
@@ -1400,47 +1804,29 @@ function App() {
 
   return (
     <div className="app-shell">
-      <OfflineBanner isOffline={isOffline} lastSync={lastSync} t={t} />
-      {renderScreen()}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '6px 16px', background: 'var(--surface)', borderTop: '1px solid var(--outline-variant)', position: 'fixed', top: 26, right: 0, left: 0, zIndex: 45, maxWidth: 430, margin: '0 auto', pointerEvents: 'none' }}>
-        {/* Settings accessible via bottom nav workaround - show gear in header */}
+      {/* Mobile/tablet: top bar + top tabs (hidden on desktop — SideNav takes over) */}
+      <AppTopBar
+        isOffline={isOffline}
+        t={t}
+        theme={theme}
+        setTheme={setTheme}
+        setScreen={setScreen}
+        screen={screen}
+      />
+      <AppTopTabs screen={screen} setScreen={setScreen} t={t} alertCount={pendingAlerts} />
+
+      {/* app-body: column on mobile, row on desktop */}
+      <div className="app-body">
+        <SideNav
+          screen={screen}
+          setScreen={setScreen}
+          t={t}
+          theme={theme}
+          setTheme={setTheme}
+          alertCount={pendingAlerts}
+        />
+        {renderScreen()}
       </div>
-      <BottomNav screen={screen} setScreen={setScreen} t={t} alertCount={pendingAlerts} />
-      {/* Settings gear in top-right */}
-      <button
-        onClick={() => setScreen('settings')}
-        style={{
-          position: 'fixed',
-          top: 32,
-          right: 'max(12px, calc(50% - 203px))',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          color: screen === 'settings' ? 'var(--primary)' : 'var(--on-surface-variant)',
-          zIndex: 46,
-          padding: 6,
-        }}
-        aria-label="Settings"
-      >
-        <Icon name="settings" size={20} />
-      </button>
-      <button
-        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        style={{
-          position: 'fixed',
-          top: 32,
-          right: 'max(48px, calc(50% - 165px))',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          color: 'var(--on-surface-variant)',
-          zIndex: 46,
-          padding: 6,
-        }}
-        aria-label="Toggle dark mode"
-      >
-        <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={20} />
-      </button>
     </div>
   )
 }
