@@ -160,15 +160,13 @@ export function MapView({ shelters, aidRequests, mini = false, theme: _theme = '
         style: MAP_STYLE,
         center: MAP_CENTER,
         zoom: mini ? 8.8 : 7.8,
-        interactive: !mini,
+        interactive: true,
         attributionControl: false,
       })
 
       mapRef.current = map
 
-      if (!mini) {
-        map.addControl(new mgl.NavigationControl({ showCompass: false }), 'top-right')
-      }
+      map.addControl(new mgl.NavigationControl({ showCompass: false }), 'top-right')
 
       map.on('load', () => {
         if (!isMounted) return
@@ -480,9 +478,9 @@ export function MapView({ shelters, aidRequests, mini = false, theme: _theme = '
     return `${h12}:00${suffix} (+${h}j)`
   }
 
-  // ── Mini-map render (no controls) ────────────────────────────────────────────
+  // ── Mini-map render ──────────────────────────────────────────────────────────
   if (mini) {
-    return <div ref={containerRef} style={{ height: 190, width: '100%' }} />
+    return <div ref={containerRef} style={{ height: 240, width: '100%', cursor: 'grab' }} />
   }
 
   // ── Full map render ───────────────────────────────────────────────────────────
